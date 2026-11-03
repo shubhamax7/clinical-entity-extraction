@@ -1,0 +1,166 @@
+{
+  "total_records": 500,
+  "records_per_split": {
+    "train": 350,
+    "validation": 75,
+    "test": 75
+  },
+  "total_entities": 5820,
+  "entities_by_category": {
+    "DISEASE": 1311,
+    "SYMPTOM": 1629,
+    "DRUG": 652,
+    "PROCEDURE": 407,
+    "INVESTIGATION": 479,
+    "DOSAGE": 484,
+    "ROUTE": 279,
+    "FREQUENCY": 430,
+    "DURATION": 149
+  },
+  "entities_by_category_per_split": {
+    "train": {
+      "DISEASE": 1004,
+      "SYMPTOM": 1025,
+      "DRUG": 490,
+      "PROCEDURE": 237,
+      "INVESTIGATION": 369,
+      "DOSAGE": 364,
+      "ROUTE": 193,
+      "FREQUENCY": 343,
+      "DURATION": 136
+    },
+    "validation": {
+      "DISEASE": 148,
+      "SYMPTOM": 323,
+      "DRUG": 65,
+      "PROCEDURE": 125,
+      "INVESTIGATION": 62,
+      "DOSAGE": 39,
+      "ROUTE": 39,
+      "FREQUENCY": 31,
+      "DURATION": 13
+    },
+    "test": {
+      "DISEASE": 159,
+      "SYMPTOM": 281,
+      "DRUG": 97,
+      "PROCEDURE": 45,
+      "INVESTIGATION": 48,
+      "DOSAGE": 81,
+      "ROUTE": 47,
+      "FREQUENCY": 56,
+      "DURATION": 0
+    }
+  },
+  "category_distribution_pct": {
+    "DISEASE": 22.53,
+    "SYMPTOM": 27.99,
+    "DRUG": 11.2,
+    "PROCEDURE": 6.99,
+    "INVESTIGATION": 8.23,
+    "DOSAGE": 8.32,
+    "ROUTE": 4.79,
+    "FREQUENCY": 7.39,
+    "DURATION": 2.56
+  },
+  "assertion_counts": {
+    "PRESENT": 4040,
+    "ABSENT": 622,
+    "FAMILY_HISTORY": 219,
+    "HISTORICAL": 671,
+    "POSSIBLE": 268
+  },
+  "assertion_by_label": {
+    "DISEASE": {
+      "FAMILY_HISTORY": 219,
+      "HISTORICAL": 237,
+      "POSSIBLE": 268,
+      "PRESENT": 455,
+      "ABSENT": 132
+    },
+    "SYMPTOM": {
+      "PRESENT": 1279,
+      "ABSENT": 329,
+      "HISTORICAL": 21
+    },
+    "DRUG": {
+      "PRESENT": 455,
+      "HISTORICAL": 123,
+      "ABSENT": 74
+    },
+    "PROCEDURE": {
+      "HISTORICAL": 125,
+      "ABSENT": 61,
+      "PRESENT": 221
+    },
+    "INVESTIGATION": {
+      "PRESENT": 453,
+      "ABSENT": 26
+    }
+  },
+  "annotation_error_count": 0,
+  "annotation_errors_by_type": {},
+  "annotation_error_samples": {},
+  "duplicate_count": {
+    "exact_duplicate_texts": 0,
+    "near_duplicate_pairs_jaccard>=0.7": 0,
+    "near_duplicate_pairs_across_splits": 0,
+    "max_pairwise_3gram_jaccard_all": 0.267,
+    "max_pairwise_3gram_jaccard_across_splits": 0.09
+  },
+  "leakage": {
+    "template_id_overlap": {
+      "train&validation": [],
+      "train&test": [],
+      "validation&test": []
+    },
+    "masked_sentence_skeleton_overlap": {
+      "train&validation": [],
+      "train&test": [],
+      "validation&test": []
+    },
+    "exact_sentence_surface_overlap_counts": {
+      "train&validation": 0,
+      "train&test": 0,
+      "validation&test": 0
+    },
+    "note": "Entity VALUES (e.g. 'metformin') are intentionally shared across splits; sentence TEMPLATES are not.",
+    "pct_of_test_entity_surface_forms_also_in_train": 97.3
+  },
+  "leakage_problem_count": 0,
+  "length_class_counts": {
+    "short": 126,
+    "long": 149,
+    "medium": 225
+  },
+  "specialty_counts": {
+    "neurology": 64,
+    "endocrinology": 62,
+    "cardiology": 64,
+    "emergency": 61,
+    "gastroenterology": 62,
+    "general_medicine": 64,
+    "orthopedics": 61,
+    "respiratory": 62
+  },
+  "char_length_min_mean_max": [
+    139,
+    398.0,
+    791
+  ],
+  "total_tokens": 34659,
+  "clinical_complexity_coverage": {
+    "records_with_negation(ABSENT)": 335,
+    "records_with_HISTORICAL": 306,
+    "records_with_POSSIBLE": 225,
+    "records_with_FAMILY_HISTORY": 187,
+    "records_with_drug+dosage+route": 249,
+    "records_with_>=2_DISEASE": 341,
+    "records_with_>=2_SYMPTOM": 429,
+    "records_with_>=2_INVESTIGATION": 110,
+    "records_with_PROCEDURE": 323,
+    "records_with_medical_abbreviations": 296
+  },
+  "all_records_synthetic": true,
+  "pass": true
+}

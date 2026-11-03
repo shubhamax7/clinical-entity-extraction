@@ -1,0 +1,68 @@
+{
+  "name": "SYN-CLINNER-v1",
+  "description": "Fully synthetic, template-generated clinical NER development dataset (BIO + character offsets).",
+  "disclaimer": "SYNTHETIC DATA. Not real patient data, not clinically validated, not a benchmark. Drug doses are illustrative and must not be used as clinical guidance.",
+  "synthetic": true,
+  "seed": 20261102,
+  "generator": "generate_dataset.py",
+  "total_records": 500,
+  "splits": {
+    "train": 350,
+    "validation": 75,
+    "test": 75
+  },
+  "files": {
+    "train.jsonl": {
+      "records": 350,
+      "sha256": "db5a9ac16162d1bff5f34d660bcf2bf476f5fd1509a6c917ab22eedfca3d3473"
+    },
+    "validation.jsonl": {
+      "records": 75,
+      "sha256": "7e616805f03e5323c88ceb3dc5352691b9ed9cfe4e7afcdde6089bba4a3154b0"
+    },
+    "test.jsonl": {
+      "records": 75,
+      "sha256": "ea29554be4eb1ee3cd449d3178286c12f1ed0f5e2ac48c4bf0c8233caa7eaf45"
+    }
+  },
+  "entity_labels": [
+    "DISEASE",
+    "SYMPTOM",
+    "DRUG",
+    "PROCEDURE",
+    "INVESTIGATION",
+    "DOSAGE",
+    "ROUTE",
+    "FREQUENCY",
+    "DURATION"
+  ],
+  "bio_scheme": "BIO (B-/I- per label, O)",
+  "assertion_values": [
+    "PRESENT",
+    "ABSENT",
+    "POSSIBLE",
+    "HISTORICAL",
+    "FAMILY_HISTORY"
+  ],
+  "offset_convention": "character offsets into record['text'] (Python str indices), half-open [start, end)",
+  "tokenizer_regex": "\\w+(?:[-/.']\\w+)*|[^\\w\\s]",
+  "specialties": [
+    "general_medicine",
+    "cardiology",
+    "neurology",
+    "respiratory",
+    "endocrinology",
+    "gastroenterology",
+    "orthopedics",
+    "emergency"
+  ],
+  "normalization": "normalized_name is a plain-text canonical string; normalization_status is always UNMAPPED_DEMO. No SNOMED CT / RxNorm / LOINC or other codes are included.",
+  "leakage_control": {
+    "method": "13 sentence-template categories x 10 templates; templates 0-5 train, 6-7 validation, 8-9 test; each template is used by exactly one split",
+    "near_duplicate_rejection": "candidate notes rejected if word-3gram Jaccard >= 0.55 with any accepted note (all splits)"
+  },
+  "extra_fields": {
+    "token_offsets": "[start, end] per token",
+    "meta": "specialty, length_class, template_ids"
+  }
+}
