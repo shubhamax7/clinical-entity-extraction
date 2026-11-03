@@ -1,3 +1,8 @@
+# Core ML training dependencies (pinned for Transformers 5.22.x compatibility)
+# NOTE: torch/torchvision/torchaudio are intentionally excluded here.
+#       Google Colab provides CUDA-enabled PyTorch builds. Installing torch
+#       from this file on Colab will replace the CUDA build with a CPU-only build.
+#       Install torch separately via Colab's pre-installed environment.
 accelerate>=1.1.0
 altair==6.3.0
 annotated-doc==0.0.5
@@ -88,7 +93,7 @@ sympy==1.14.0
 thinc==8.3.14
 threadpoolctl==3.7.0
 tokenizers==0.23.3
-torch==2.15.0
+# torch==2.15.0  # DO NOT install from here on Colab — use Colab's pre-installed CUDA build
 tqdm==4.70.1
 transformers==5.22.1
 truststore==0.10.5
