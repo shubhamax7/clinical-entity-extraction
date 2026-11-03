@@ -273,58 +273,111 @@ class TestWarmupStepsCalculation:
 
 
 class TestMixedPrecisionLogic:
-    """Unit tests verifying BF16 is only enabled when CUDA supports it, with FP16 fallback."""
+    """Unit tests verifying BF16/FP16 selection via CUDA compute capability.
 
-    def test_cuda_with_bf16_support_enables_bf16(self, monkeypatch, tmp_path):
+    BF16 is enabled only on Ampere+ (compute capability major >= 8).
+    Tesla T4 is compute capability 7.5 -> must use FP16 even though
+    torch.cuda.is_bf16_supported() may return True on some PyTorch versions.
+    """
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _patch_cuda(monkeypatch, available: bool, major: int = 8, minor: int = 0) -> None:
+        """Patch torch.cuda so capability checks return the given (major, minor)."""
         import torch
 
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: available)
+        if available:
+            monkeypatch.setattr(
+                torch.cuda, "get_device_capability", lambda device=None: (major, minor)
+            )
+            monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+
+    # ------------------------------------------------------------------
+    # T4 (7, 5) — compute capability < 8 — must always use FP16
+    # ------------------------------------------------------------------
+
+    def test_t4_auto_selection_uses_fp16(self, monkeypatch, tmp_path):
+        """T4 (7.5): auto-selection should pick FP16, never BF16."""
+        self._patch_cuda(monkeypatch, available=True, major=7, minor=5)
+
+        cfg = TrainConfig(output_dir=str(tmp_path), bf16=False, fp16=False)
+        args_dict = build_training_args_dict(cfg, num_train_records=350)
+        assert args_dict.get("fp16") is True
+        assert args_dict.get("bf16") is not True
+
+    def test_t4_bf16_requested_falls_back_to_fp16(self, monkeypatch, tmp_path):
+        """T4 (7.5): explicit bf16=True must fall back to FP16 with a warning."""
+        self._patch_cuda(monkeypatch, available=True, major=7, minor=5)
+
+        cfg = TrainConfig(output_dir=str(tmp_path), bf16=True)
+        args_dict = build_training_args_dict(cfg, num_train_records=350)
+        assert args_dict.get("fp16") is True
+        assert args_dict.get("bf16") is not True
+
+    def test_t4_explicit_fp16_uses_fp16(self, monkeypatch, tmp_path):
+        """T4 (7.5): explicit fp16=True should be honoured."""
+        self._patch_cuda(monkeypatch, available=True, major=7, minor=5)
+
+        cfg = TrainConfig(output_dir=str(tmp_path), fp16=True, bf16=False)
+        args_dict = build_training_args_dict(cfg, num_train_records=350)
+        assert args_dict.get("fp16") is True
+        assert args_dict.get("bf16") is not True
+
+    # ------------------------------------------------------------------
+    # Ampere A100 (8, 0) — compute capability >= 8 — BF16 native
+    # ------------------------------------------------------------------
+
+    def test_ampere_bf16_requested_enables_bf16(self, monkeypatch, tmp_path):
+        """Ampere (8.0): explicit bf16=True should enable BF16."""
+        self._patch_cuda(monkeypatch, available=True, major=8, minor=0)
 
         cfg = TrainConfig(output_dir=str(tmp_path), bf16=True)
         args_dict = build_training_args_dict(cfg, num_train_records=350)
         assert args_dict.get("bf16") is True
         assert args_dict.get("fp16") is not True
 
-    def test_cuda_without_bf16_support_falls_back_to_fp16(self, monkeypatch, tmp_path):
-        import torch
+    def test_ampere_auto_selection_uses_bf16(self, monkeypatch, tmp_path):
+        """Ampere (8.0): auto-selection should pick BF16."""
+        self._patch_cuda(monkeypatch, available=True, major=8, minor=0)
 
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
-
-        cfg = TrainConfig(output_dir=str(tmp_path), bf16=True)
-        args_dict = build_training_args_dict(cfg, num_train_records=350)
-        # BF16 requested but unsupported -> falls back to FP16
-        assert args_dict.get("fp16") is True
-        assert args_dict.get("bf16") is not True
-
-    def test_cuda_default_auto_detection_with_bf16(self, monkeypatch, tmp_path):
-        import torch
-
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
-
-        # Neither bf16 nor fp16 explicitly set -> auto-detects bf16 on supported CUDA
         cfg = TrainConfig(output_dir=str(tmp_path), bf16=False, fp16=False)
         args_dict = build_training_args_dict(cfg, num_train_records=350)
         assert args_dict.get("bf16") is True
         assert args_dict.get("fp16") is not True
 
-    def test_cuda_default_auto_detection_without_bf16(self, monkeypatch, tmp_path):
-        import torch
+    def test_ampere_explicit_fp16_overrides_auto(self, monkeypatch, tmp_path):
+        """Ampere (8.0): explicit fp16=True should be honoured even on capable hardware."""
+        self._patch_cuda(monkeypatch, available=True, major=8, minor=0)
 
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
-
-        # Neither bf16 nor fp16 explicitly set -> auto-detects fp16 on T4-like CUDA
-        cfg = TrainConfig(output_dir=str(tmp_path), bf16=False, fp16=False)
+        cfg = TrainConfig(output_dir=str(tmp_path), fp16=True, bf16=False)
         args_dict = build_training_args_dict(cfg, num_train_records=350)
         assert args_dict.get("fp16") is True
         assert args_dict.get("bf16") is not True
 
-    def test_non_cuda_device_has_no_mixed_precision(self, monkeypatch, tmp_path):
-        import torch
+    # ------------------------------------------------------------------
+    # Hopper H100 (9, 0) — also >= 8
+    # ------------------------------------------------------------------
 
+    def test_hopper_auto_selection_uses_bf16(self, monkeypatch, tmp_path):
+        """Hopper (9.0): auto-selection should pick BF16."""
+        self._patch_cuda(monkeypatch, available=True, major=9, minor=0)
+
+        cfg = TrainConfig(output_dir=str(tmp_path), bf16=False, fp16=False)
+        args_dict = build_training_args_dict(cfg, num_train_records=350)
+        assert args_dict.get("bf16") is True
+        assert args_dict.get("fp16") is not True
+
+    # ------------------------------------------------------------------
+    # CPU-only — mixed precision must be disabled
+    # ------------------------------------------------------------------
+
+    def test_cpu_only_disables_all_mixed_precision(self, monkeypatch, tmp_path):
+        """CPU-only execution: both bf16 and fp16 must be absent/False."""
+        import torch
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
         cfg = TrainConfig(output_dir=str(tmp_path), bf16=True, fp16=True)

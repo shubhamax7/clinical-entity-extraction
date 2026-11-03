@@ -267,31 +267,40 @@ def build_training_args_dict(
         "report_to": "none",
     }
 
-    # Auto-detect or respect mixed precision: BF16 only when CUDA device supports it
+    # Auto-detect or respect mixed precision using compute capability.
+    # BF16 requires Ampere (compute capability >= 8.0). Tesla T4 is 7.5 and must use FP16.
+    # We rely on get_device_capability() rather than is_bf16_supported(), which incorrectly
+    # returns True on T4 in some PyTorch versions.
     is_cuda = torch.cuda.is_available()
     if is_cuda:
-        cuda_supports_bf16 = bool(hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported())
+        major, _ = torch.cuda.get_device_capability(torch.cuda.current_device())
+        hw_bf16_capable = major >= 8  # Ampere (A100) = 8.0, Hopper = 9.0; T4 = 7.5 -> False
         if config.bf16:
-            if cuda_supports_bf16:
+            if hw_bf16_capable:
                 kwargs["bf16"] = True
-                logger.info("BF16 mixed precision enabled on CUDA device.")
+                logger.info("BF16 mixed precision enabled (compute capability %d.x).", major)
             else:
                 kwargs["fp16"] = True
                 logger.warning(
-                    "BF16 was requested, but current CUDA device does not support BF16. "
-                    "Falling back to FP16 mixed precision."
+                    "BF16 was requested, but current CUDA device (compute capability %d.x) "
+                    "does not support BF16 natively. Falling back to FP16 mixed precision.",
+                    major,
                 )
         elif config.fp16:
             kwargs["fp16"] = True
-            logger.info("FP16 mixed precision enabled on CUDA device.")
+            logger.info("FP16 mixed precision enabled on CUDA device (compute capability %d.x).", major)
         else:
-            # Default auto-selection on CUDA: BF16 if supported, otherwise FP16
-            if cuda_supports_bf16:
+            # Default auto-selection: BF16 on Ampere+, FP16 on older GPUs (e.g. T4)
+            if hw_bf16_capable:
                 kwargs["bf16"] = True
-                logger.info("Auto-enabled BF16 mixed precision on compatible CUDA device.")
+                logger.info(
+                    "Auto-enabled BF16 mixed precision (compute capability %d.x >= 8).", major
+                )
             else:
                 kwargs["fp16"] = True
-                logger.info("Auto-enabled FP16 mixed precision on CUDA device.")
+                logger.info(
+                    "Auto-enabled FP16 mixed precision (compute capability %d.x < 8).", major
+                )
 
     return kwargs
 
