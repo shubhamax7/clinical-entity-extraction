@@ -11,6 +11,7 @@ import argparse
 import inspect
 import json
 import logging
+import math
 import os
 import sys
 from dataclasses import asdict, dataclass
@@ -174,11 +175,77 @@ def parse_args(args: list[str] | None = None) -> TrainConfig:
 # ---------------------------------------------------------------------------
 
 
-def create_training_arguments(config: TrainConfig) -> TrainingArguments:
-    """Create TrainingArguments with backward/forward compatibility."""
+def count_train_records(train_file: str | Path) -> int:
+    """Count non-empty lines in a JSONL training file.
+
+    Raises
+    ------
+    FileNotFoundError:
+        If train_file does not exist.
+    ValueError:
+        If train_file is empty or contains no records.
+    """
+    path = Path(train_file)
+    if not path.is_file():
+        raise FileNotFoundError(f"Training file '{path}' does not exist.")
+
+    count = 0
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                count += 1
+
+    if count == 0:
+        raise ValueError(f"Training file '{path}' is empty or contains no records.")
+    return count
+
+
+def calculate_warmup_steps(
+    num_records: int,
+    batch_size: int,
+    epochs: int,
+    warmup_ratio: float,
+) -> int:
+    """Calculate warmup steps dynamically from records, batch size, epochs, and ratio.
+
+    Formula:
+        steps_per_epoch = ceil(num_records / batch_size)
+        total_training_steps = steps_per_epoch * epochs
+        warmup_steps = ceil(total_training_steps * warmup_ratio)
+    """
+    if num_records <= 0:
+        raise ValueError(f"Invalid num_records={num_records}; must have at least 1 record.")
+    if batch_size <= 0:
+        raise ValueError(f"Invalid batch_size={batch_size}; must be > 0.")
+    if epochs <= 0:
+        raise ValueError(f"Invalid epochs={epochs}; must be > 0.")
+    if not (0.0 <= warmup_ratio <= 1.0):
+        raise ValueError(f"Invalid warmup_ratio={warmup_ratio}; must be between 0.0 and 1.0.")
+
+    steps_per_epoch = math.ceil(num_records / batch_size)
+    total_training_steps = steps_per_epoch * epochs
+    warmup_steps = math.ceil(total_training_steps * warmup_ratio)
+    return warmup_steps
+
+
+def build_training_args_dict(
+    config: TrainConfig,
+    num_train_records: int | None = None,
+) -> dict[str, Any]:
+    """Construct keyword arguments for TrainingArguments with dynamic warmup_steps."""
     # Detect whether 'eval_strategy' or 'evaluation_strategy' is used
     sig = inspect.signature(TrainingArguments.__init__)
     eval_arg_name = "eval_strategy" if "eval_strategy" in sig.parameters else "evaluation_strategy"
+
+    if num_train_records is None:
+        num_train_records = count_train_records(config.train_file)
+
+    warmup_steps = calculate_warmup_steps(
+        num_records=num_train_records,
+        batch_size=config.batch_size,
+        epochs=config.epochs,
+        warmup_ratio=config.warmup_ratio,
+    )
 
     kwargs: dict[str, Any] = {
         "output_dir": config.output_dir,
@@ -189,7 +256,7 @@ def create_training_arguments(config: TrainConfig) -> TrainingArguments:
         "per_device_eval_batch_size": config.batch_size,
         "num_train_epochs": config.epochs,
         "weight_decay": config.weight_decay,
-        "warmup_ratio": config.warmup_ratio,
+        "warmup_steps": warmup_steps,
         "metric_for_best_model": "f1",
         "greater_is_better": True,
         "load_best_model_at_end": True,
@@ -200,18 +267,41 @@ def create_training_arguments(config: TrainConfig) -> TrainingArguments:
         "report_to": "none",
     }
 
-    # Auto-detect or respect mixed precision
+    # Auto-detect or respect mixed precision: BF16 only when CUDA device supports it
     is_cuda = torch.cuda.is_available()
     if is_cuda:
+        cuda_supports_bf16 = bool(hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported())
         if config.bf16:
-            kwargs["bf16"] = True
-        elif config.fp16 or not config.bf16:
-            # Default to fp16 if on CUDA unless bf16 is explicitly requested
-            if torch.cuda.is_bf16_supported() and config.bf16:
+            if cuda_supports_bf16:
                 kwargs["bf16"] = True
+                logger.info("BF16 mixed precision enabled on CUDA device.")
             else:
                 kwargs["fp16"] = True
+                logger.warning(
+                    "BF16 was requested, but current CUDA device does not support BF16. "
+                    "Falling back to FP16 mixed precision."
+                )
+        elif config.fp16:
+            kwargs["fp16"] = True
+            logger.info("FP16 mixed precision enabled on CUDA device.")
+        else:
+            # Default auto-selection on CUDA: BF16 if supported, otherwise FP16
+            if cuda_supports_bf16:
+                kwargs["bf16"] = True
+                logger.info("Auto-enabled BF16 mixed precision on compatible CUDA device.")
+            else:
+                kwargs["fp16"] = True
+                logger.info("Auto-enabled FP16 mixed precision on CUDA device.")
 
+    return kwargs
+
+
+def create_training_arguments(
+    config: TrainConfig,
+    num_train_records: int | None = None,
+) -> TrainingArguments:
+    """Create TrainingArguments with backward/forward compatibility and dynamic warmup_steps."""
+    kwargs = build_training_args_dict(config, num_train_records=num_train_records)
     return TrainingArguments(**kwargs)
 
 
@@ -354,7 +444,7 @@ def train_model(config: TrainConfig) -> dict[str, Any]:
     )
 
     # 8. Training arguments & callbacks
-    training_args = create_training_arguments(config)
+    training_args = create_training_arguments(config, num_train_records=len(train_records))
     collator = DataCollatorForTokenClassification(tokenizer=tokenizer, label_pad_token_id=IGNORE_INDEX)
     compute_metrics_fn = build_compute_metrics(id2label)
 
