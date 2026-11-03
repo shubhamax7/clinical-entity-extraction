@@ -44,6 +44,7 @@ from preprocessing import (
     build_label_maps,
     encode_record,
     load_jsonl,
+    load_tokenizer,
     validate_records,
 )
 
@@ -114,6 +115,7 @@ class TrainConfig:
     logging_steps: int = 10
     resume_from_checkpoint: str | None = None
     do_test: bool = True
+    local_files_only: bool = False
 
 
 def parse_args(args: list[str] | None = None) -> TrainConfig:
@@ -140,6 +142,7 @@ def parse_args(args: list[str] | None = None) -> TrainConfig:
     parser.add_argument("--logging_steps", type=int, default=10)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument("--no_test", action="store_false", dest="do_test", help="Skip final test evaluation")
+    parser.add_argument("--local_files_only", action="store_true", help="Only load tokenizer from local cache (offline mode). Default False.")
 
     parsed = parser.parse_args(args)
     return TrainConfig(
@@ -162,6 +165,7 @@ def parse_args(args: list[str] | None = None) -> TrainConfig:
         logging_steps=parsed.logging_steps,
         resume_from_checkpoint=parsed.resume_from_checkpoint,
         do_test=parsed.do_test,
+        local_files_only=parsed.local_files_only,
     )
 
 
@@ -211,6 +215,76 @@ def create_training_arguments(config: TrainConfig) -> TrainingArguments:
     return TrainingArguments(**kwargs)
 
 
+def resolve_resume_checkpoint(
+    resume_from_checkpoint: str | bool | None,
+    output_dir: str | Path,
+) -> str | None:
+    """Resolve resume_from_checkpoint argument to a verified checkpoint path.
+
+    Parameters
+    ----------
+    resume_from_checkpoint:
+        - None or False or "" -> returns None (fresh training).
+        - True or string in {"true", "1", "latest"} -> resolves latest checkpoint in output_dir.
+        - Path to an explicit checkpoint dir containing trainer_state.json -> returns path.
+        - Path to an output dir containing checkpoint-* subdirs -> resolves latest checkpoint.
+    output_dir:
+        Output directory containing checkpoints when resuming with True / latest.
+
+    Returns
+    -------
+    str | None:
+        The verified checkpoint directory path, or None to start from scratch.
+
+    Raises
+    ------
+    FileNotFoundError:
+        If an explicit checkpoint path does not exist, or does not contain a valid checkpoint.
+    """
+    if resume_from_checkpoint is None or resume_from_checkpoint is False or resume_from_checkpoint == "":
+        return None
+
+    from transformers.trainer import TRAINER_STATE_NAME
+    from transformers.trainer_utils import get_last_checkpoint
+
+    # Boolean True or string representation of True / latest / 1
+    if isinstance(resume_from_checkpoint, bool) or str(resume_from_checkpoint).strip().lower() in ("true", "1", "latest"):
+        out_path = Path(output_dir)
+        if not out_path.exists():
+            logger.warning("Output directory %s does not exist. Starting training from scratch.", output_dir)
+            return None
+        last_cp = get_last_checkpoint(str(out_path))
+        if last_cp is None:
+            logger.warning("No checkpoint found in output directory %s. Starting training from scratch.", output_dir)
+            return None
+        logger.info("Resuming training from latest checkpoint in %s: %s", output_dir, last_cp)
+        return last_cp
+
+    # Explicit path provided as string
+    candidate = Path(str(resume_from_checkpoint).strip())
+    if not candidate.exists():
+        raise FileNotFoundError(
+            f"Checkpoint path '{candidate}' does not exist. Cannot resume training."
+        )
+
+    # Path directly contains trainer_state.json
+    if (candidate / TRAINER_STATE_NAME).exists():
+        logger.info("Resuming training from explicit checkpoint: %s", candidate)
+        return str(candidate)
+
+    # Path is a directory containing checkpoint-* subdirectories (e.g. parent output_dir)
+    if candidate.is_dir():
+        last_cp = get_last_checkpoint(str(candidate))
+        if last_cp is not None and (Path(last_cp) / TRAINER_STATE_NAME).exists():
+            logger.info("Resolved parent directory '%s' to latest checkpoint: %s", candidate, last_cp)
+            return str(last_cp)
+
+    raise FileNotFoundError(
+        f"Specified resume_from_checkpoint='{resume_from_checkpoint}' is not a valid checkpoint directory "
+        f"(missing '{TRAINER_STATE_NAME}') and contains no valid checkpoint subdirectories."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main Training Routine
 # ---------------------------------------------------------------------------
@@ -253,8 +327,16 @@ def train_model(config: TrainConfig) -> dict[str, Any]:
     )
 
     # 5. Tokenizer
-    logger.info("Loading tokenizer: %s", config.model_name)
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name, use_fast=True)
+    logger.info("Loading tokenizer: %s (local_files_only=%s)", config.model_name, config.local_files_only)
+    tokenizer = (
+        load_tokenizer(local_files_only=config.local_files_only)
+        if config.model_name == MODEL_NAME
+        else AutoTokenizer.from_pretrained(
+            config.model_name,
+            use_fast=True,
+            local_files_only=config.local_files_only,
+        )
+    )
 
     # 6. Build Datasets
     logger.info("Encoding records into token datasets (max_length=%d)...", config.max_length)
@@ -293,8 +375,15 @@ def train_model(config: TrainConfig) -> dict[str, Any]:
     )
 
     # 10. Train
-    logger.info("Executing training loop...")
-    train_result = trainer.train(resume_from_checkpoint=config.resume_from_checkpoint)
+    resume_checkpoint = resolve_resume_checkpoint(
+        resume_from_checkpoint=config.resume_from_checkpoint,
+        output_dir=config.output_dir,
+    )
+    if resume_checkpoint:
+        logger.info("Executing training loop (resuming from: %s)...", resume_checkpoint)
+    else:
+        logger.info("Executing training loop (from scratch)...")
+    train_result = trainer.train(resume_from_checkpoint=resume_checkpoint)
 
     # 11. Save best model and tokenizer together
     out_dir = Path(config.output_dir)

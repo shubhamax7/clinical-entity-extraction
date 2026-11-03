@@ -83,19 +83,21 @@ def build_label_maps() -> tuple[list[str], dict[str, int], dict[int, str]]:
 # ---------------------------------------------------------------------------
 
 
-def load_tokenizer():
+def load_tokenizer(local_files_only: bool = True):
     """Load the Bio_ClinicalBERT fast tokenizer (no model weights).
 
-    Requires the tokenizer files to be cached locally.  Will not initiate
-    a network download when local_files_only=True; raises OSError if the
-    cache is absent.
+    Parameters
+    ----------
+    local_files_only:
+        If True, only load from local cache without network calls (safe default for local Mac).
+        In Google Colab or fresh cloud environments, pass False to download from Hugging Face Hub.
     """
     from transformers import AutoTokenizer  # import here to keep module importable
 
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME,
         use_fast=True,
-        local_files_only=True,
+        local_files_only=local_files_only,
     )
     return tokenizer
 

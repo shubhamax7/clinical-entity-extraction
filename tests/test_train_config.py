@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from preprocessing import build_label_maps, load_tokenizer
-from train import ClinicalNERDataset, TrainConfig, parse_args
+from train import ClinicalNERDataset, TrainConfig, parse_args, resolve_resume_checkpoint
 
 
 @pytest.fixture(scope="module")
@@ -112,4 +112,73 @@ def test_clinical_ner_dataset(tokenizer, label_maps):
     assert label2id["B-DRUG"] in item1["labels"]
     assert label2id["B-DOSAGE"] in item1["labels"]
     assert label2id["B-FREQUENCY"] in item1["labels"]
+
+
+class TestResolveResumeCheckpoint:
+    """Unit tests for resolve_resume_checkpoint in train.py."""
+
+    def test_none_or_false_returns_none(self, tmp_path):
+        assert resolve_resume_checkpoint(None, tmp_path) is None
+        assert resolve_resume_checkpoint(False, tmp_path) is None
+        assert resolve_resume_checkpoint("", tmp_path) is None
+
+    def test_boolean_true_with_checkpoints(self, tmp_path):
+        cp10 = tmp_path / "checkpoint-10"
+        cp20 = tmp_path / "checkpoint-20"
+        cp10.mkdir()
+        cp20.mkdir()
+        (cp10 / "trainer_state.json").write_text("{}")
+        (cp20 / "trainer_state.json").write_text("{}")
+
+        # Resolves latest (checkpoint-20)
+        assert resolve_resume_checkpoint(True, tmp_path) == str(cp20)
+
+    def test_string_alias_true_latest_one(self, tmp_path):
+        cp50 = tmp_path / "checkpoint-50"
+        cp50.mkdir()
+        (cp50 / "trainer_state.json").write_text("{}")
+
+        for alias in ("true", "True", "TRUE", "latest", "1"):
+            resolved = resolve_resume_checkpoint(alias, tmp_path)
+            assert resolved == str(cp50), f"Failed for alias {alias}"
+
+    def test_boolean_true_with_no_checkpoints_returns_none(self, tmp_path):
+        # Empty output directory returns None (starts from scratch)
+        assert resolve_resume_checkpoint(True, tmp_path) is None
+
+    def test_nonexistent_output_dir_returns_none(self, tmp_path):
+        missing_dir = tmp_path / "does_not_exist"
+        assert resolve_resume_checkpoint(True, missing_dir) is None
+
+    def test_explicit_checkpoint_dir_with_state(self, tmp_path):
+        cp = tmp_path / "checkpoint-100"
+        cp.mkdir()
+        (cp / "trainer_state.json").write_text("{}")
+
+        resolved = resolve_resume_checkpoint(str(cp), tmp_path)
+        assert resolved == str(cp)
+
+    def test_parent_output_dir_resolves_latest(self, tmp_path):
+        out_dir = tmp_path / "models"
+        cp1 = out_dir / "checkpoint-100"
+        cp2 = out_dir / "checkpoint-200"
+        cp1.mkdir(parents=True)
+        cp2.mkdir(parents=True)
+        (cp1 / "trainer_state.json").write_text("{}")
+        (cp2 / "trainer_state.json").write_text("{}")
+
+        # Passing the parent directory as the string path resolves checkpoint-200
+        resolved = resolve_resume_checkpoint(str(out_dir), tmp_path)
+        assert resolved == str(cp2)
+
+    def test_nonexistent_explicit_path_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            resolve_resume_checkpoint(str(tmp_path / "phantom-checkpoint"), tmp_path)
+
+    def test_invalid_explicit_dir_raises(self, tmp_path):
+        empty_dir = tmp_path / "empty_dir"
+        empty_dir.mkdir()
+        with pytest.raises(FileNotFoundError, match="not a valid checkpoint directory"):
+            resolve_resume_checkpoint(str(empty_dir), tmp_path)
+
 
